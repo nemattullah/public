@@ -1,0 +1,38 @@
+import snowflake.connector
+import pandas as pd
+
+# Step 1: Connect to Snowflake
+conn = snowflake.connector.connect(
+    user='YOUR_USERNAME',
+    password='YOUR_PASSWORD',
+    account='YOUR_ACCOUNT',
+    warehouse='YOUR_WAREHOUSE',
+    database='YOUR_DATABASE',
+    schema='YOUR_SCHEMA',
+    role='YOUR_ROLE'   # optional
+)
+
+# Step 2: Define queries (can also load from file as shown earlier)
+queries = {
+    "customers": "SELECT NAME FROM CUSTOMERS LIMIT 5",
+    "orders": "SELECT ORDER_ID FROM ORDERS LIMIT 5",
+    "products": "SELECT PRODUCT_NAME FROM PRODUCTS LIMIT 5"
+}
+
+# Step 3: Execute queries and keep only one column from each
+columns_data = {}
+for name, query in queries.items():
+    df = pd.read_sql(query, conn)
+    if not df.empty:
+        # Take the first column of the result
+        columns_data[name] = df.iloc[:, 0]
+    else:
+        columns_data[name] = pd.Series(dtype="object")
+
+# Step 4: Combine all results into one DataFrame
+final_df = pd.DataFrame(columns_data)
+
+# Step 5: Save to CSV
+final_df.to_csv("all_results.csv", index=False)
+
+print("✅ All query results saved in one CSV with query names as columns.")
