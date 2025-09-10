@@ -1,0 +1,84 @@
+from airflow.decorators import dag, task
+from airflow.utils.dates import days_ago
+from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+import pandas as pd
+import os
+
+
+# ----------- Helper: Fetch data from Snowflake -----------
+def fetch_from_snowflake(query: str) -> pd.DataFrame:
+    hook = SnowflakeHook(snowflake_conn_id="my_snowflake_conn")  # Defined in Airflow UI
+    conn = hook.get_conn()
+    df = pd.read_sql(query, conn)
+    conn.close()
+    return df
+
+
+# ----------- DAG Definition -----------
+@dag(
+    dag_id="snowflake_multi_fetch_to_csv",
+    start_date=days_ago(1),
+    schedule_interval=None,    # Run manually or set cron
+    catchup=False,
+    default_args={"owner": "airflow", "retries": 1},
+    tags=["snowflake", "csv", "export"],
+)
+def snowflake_multi_fetch_to_csv():
+
+    # --- 1. Multiple fetch queries ---
+    @task()
+    def fetch_table1():
+        df = fetch_from_snowflake("SELECT * FROM TABLE1 LIMIT 100")
+        path = "/tmp/table1.csv"
+        df.to_csv(path, index=False)
+        return path
+
+    @task()
+    def fetch_table2():
+        df = fetch_from_snowflake("SELECT * FROM TABLE2 WHERE status='ACTIVE'")
+        path = "/tmp/table2.csv"
+        df.to_csv(path, index=False)
+        return path
+
+    @task()
+    def fetch_table3():
+        df = fetch_from_snowflake("SELECT col1, col2 FROM TABLE3")
+        path = "/tmp/table3.csv"
+        df.to_csv(path, index=False)
+        return path
+
+    # --- 2. Processing step ---
+    @task()
+    def process_data(file_paths: list):
+        dfs = [pd.read_csv(f) for f in file_paths]
+        merged = pd.concat(dfs, ignore_index=True)
+
+        # Example transformation
+        merged["processed_flag"] = "Y"
+
+        output_path = "/tmp/processed_data.csv"
+        merged.to_csv(output_path, index=False)
+        return output_path
+
+    # --- 3. Save to CSV (already done above) ---
+    # merged file is saved in process_data
+
+    # --- 4. Export to server location ---
+    @task()
+    def export_to_server(file_path: str):
+        server_dir = "/opt/airflow/exported_files"
+        os.makedirs(server_dir, exist_ok=True)
+        final_path = os.path.join(server_dir, "final_data.csv")
+        os.replace(file_path, final_path)
+        print(f"✅ File exported to: {final_path}")
+
+    # -------- DAG Flow --------
+    f1 = fetch_table1()
+    f2 = fetch_table2()
+    f3 = fetch_table3()
+
+    processed = process_data([f1, f2, f3])
+    export_to_server(processed)
+
+
+dag = snowflake_multi_fetch_to_csv()
